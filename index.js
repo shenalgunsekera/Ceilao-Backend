@@ -1,11 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const cors    = require('cors');
-const multer  = require('multer');
-const cloudinary = require('cloudinary').v2;
 
-const app    = express();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const app = express();
 
 const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:3000').split(',').map(s => s.trim());
 app.use(cors({
@@ -16,34 +13,8 @@ app.use(cors({
 }));
 app.use(express.json());
 
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key:    process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
-
-const ALLOWED_FOLDERS = ['ceilao/docs', 'ceilao/images', 'ceilao/quotes'];
-
 /* ── health ──────────────────────────────────────────────────────────── */
 app.get('/health', (_, res) => res.json({ status: 'OK', service: 'Ceilao Backend', ts: new Date().toISOString() }));
-
-/* ── Cloudinary upload ───────────────────────────────────────────────── */
-app.post('/upload', upload.single('file'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file provided' });
-  const folder = ALLOWED_FOLDERS.includes(req.body.folder) ? req.body.folder : 'ceilao/docs';
-  try {
-    const result = await new Promise((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream(
-        { folder, resource_type: 'auto' },
-        (err, r) => err ? reject(err) : resolve(r)
-      );
-      stream.end(req.file.buffer);
-    });
-    res.json({ url: result.secure_url, public_id: result.public_id });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 /* ── WhatsApp Business API proxy ─────────────────────────────────────── */
 app.post('/send-whatsapp', async (req, res) => {
