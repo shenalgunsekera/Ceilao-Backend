@@ -5,9 +5,15 @@ const multer  = require('multer');
 const cloudinary = require('cloudinary').v2;
 
 const app    = express();
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-app.use(cors({ origin: '*' }));
+const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:3000').split(',').map(s => s.trim());
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    cb(new Error('Not allowed by CORS'));
+  }
+}));
 app.use(express.json());
 
 cloudinary.config({
@@ -16,16 +22,19 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
+const ALLOWED_FOLDERS = ['ceilao/docs', 'ceilao/images', 'ceilao/quotes'];
+
 /* ── health ──────────────────────────────────────────────────────────── */
 app.get('/health', (_, res) => res.json({ status: 'OK', service: 'Ceilao Backend', ts: new Date().toISOString() }));
 
-/* ── signed Cloudinary upload (optional — use unsigned preset instead) ─ */
+/* ── Cloudinary upload ───────────────────────────────────────────────── */
 app.post('/upload', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file provided' });
+  const folder = ALLOWED_FOLDERS.includes(req.body.folder) ? req.body.folder : 'ceilao/docs';
   try {
     const result = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
-        { folder: req.body.folder || 'ceilao/docs', resource_type: 'auto' },
+        { folder, resource_type: 'auto' },
         (err, r) => err ? reject(err) : resolve(r)
       );
       stream.end(req.file.buffer);
@@ -38,9 +47,16 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 
 /* ── WhatsApp Business API proxy ─────────────────────────────────────── */
 app.post('/send-whatsapp', async (req, res) => {
-  const { phoneNumberId, accessToken, to, message } = req.body;
-  if (!phoneNumberId || !accessToken || !to || !message) {
-    return res.status(400).json({ error: 'Missing required fields: phoneNumberId, accessToken, to, message' });
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const accessToken   = process.env.WHATSAPP_ACCESS_TOKEN;
+
+  if (!phoneNumberId || !accessToken) {
+    return res.status(503).json({ error: 'WhatsApp is not configured on this server' });
+  }
+
+  const { to, message } = req.body;
+  if (!to || !message) {
+    return res.status(400).json({ error: 'Missing required fields: to, message' });
   }
 
   const cleanPhone = String(to).replace(/[^0-9]/g, '');
@@ -61,8 +77,8 @@ app.post('/send-whatsapp', async (req, res) => {
         path:     `/v20.0/${phoneNumberId}/messages`,
         method:   'POST',
         headers:  {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type':  'application/json',
+          'Authorization':  `Bearer ${accessToken}`,
+          'Content-Type':   'application/json',
           'Content-Length': Buffer.byteLength(body),
         },
       };
